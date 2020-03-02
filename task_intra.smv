@@ -1,0 +1,494 @@
+-------------------------------------------------------------------------------
+-- Muffliato specification - Execution of a task                             --
+-------------------------------------------------------------------------------
+
+
+-- Pod_in ---------------------------------------------------------------------
+
+-- The pod_in receives the data and sends the notifications to the cs.
+
+-------------------------------------------------------------------------------
+
+MODULE Pod_in(contractor_space)
+    VAR
+        contents : array 0..2 of boolean;
+        cs_pub_key : boolean;
+        trigger_start : boolean;
+
+    ASSIGN
+        init(contents[0]) := TRUE;
+        init(contents[1]) := TRUE;
+        init(contents[2]) := TRUE;
+        init(trigger_start) := TRUE;
+        init(cs_pub_key) := TRUE;
+
+        -- Invariants
+        next(contents[0]) := contents[0];
+        next(contents[1]) := contents[1];
+        next(trigger_start) := trigger_start;
+        next(cs_pub_key) := cs_pub_key;
+
+        -- pod sends notification if it has the data
+        next(contractor_space.trigger_notifications[0]) :=
+            case
+                (cs_pub_key & contents[0]) : TRUE;
+                TRUE : contractor_space.trigger_notifications[0];
+            esac;
+        next(contractor_space.trigger_notifications[1]) :=
+            case
+                (cs_pub_key & contents[1]) : TRUE;
+                TRUE : contractor_space.trigger_notifications[1];
+            esac;
+        next(contractor_space.trigger_notifications[2]) :=
+            case
+                (cs_pub_key & contents[2]) : TRUE;
+                TRUE : contractor_space.trigger_notifications[2];
+            esac;
+
+        -- Check to showcase stream mode with the third chunk arriving after the first is paid
+        next(contents[2]) :=
+            case
+                (contractor_space.outputs[0] = {paid_work}) : TRUE;
+                TRUE : contents[2];
+            esac;
+-- END MODULE
+
+
+-- Pod_out --------------------------------------------------------------------
+
+-- The pod_out contains the outputs of the task. Written to by the contractor
+
+-------------------------------------------------------------------------------
+
+MODULE Pod_out(workflow_controller, contractor_space, task_controller)
+    VAR
+        contents : array 0..2 of {empty, clear_data, watermarked_data};
+        trigger_marking : boolean;
+        trigger_dispatching : boolean;
+        wc_pub_key : boolean;
+        sent : array 0..2 of boolean;
+
+    ASSIGN
+        init(contents[0]) := {empty}; -- Are filled by CS
+        init(contents[1]) := {empty};
+        init(contents[2]) := {empty};
+        init(trigger_marking) := TRUE;
+        init(trigger_dispatching) := TRUE;
+        init(wc_pub_key) := TRUE;
+        init(sent[0]) := FALSE;
+        init(sent[1]) := FALSE;
+        init(sent[2]) := FALSE;
+
+        -- Invariants
+        next(trigger_marking) := trigger_marking;
+        next(trigger_dispatching) := trigger_dispatching;
+        next(wc_pub_key) := wc_pub_key;
+
+        -- Watermarking data and receiving data from cs
+        next(contents[0]) :=
+            case
+                (contents[0] = {watermarked_data}) : {watermarked_data}; -- Stay at end state
+                (trigger_marking & contents[0] = {clear_data}) : {watermarked_data};
+                (contractor_space.outputs[0] = {paid_work} & contractor_space.podout_pub_key & task_controller.firewall = {pods_and_chain}) : {clear_data};
+                TRUE : contents[0];
+            esac;
+        next(contents[1]) :=
+            case
+                (contents[1] = {watermarked_data}) : {watermarked_data}; -- Stay at end state
+                (trigger_marking & contents[1] = {clear_data}) : {watermarked_data};
+                (contractor_space.outputs[1] = {paid_work} & contractor_space.podout_pub_key & task_controller.firewall = {pods_and_chain}) : {clear_data};
+                TRUE : contents[1];
+            esac;
+        next(contents[2]) :=
+            case
+                (contents[2] = {watermarked_data}) : {watermarked_data}; -- Stay at end state
+                (trigger_marking & contents[2] = {clear_data}) : {watermarked_data};
+                (contractor_space.outputs[2] = {paid_work} & contractor_space.podout_pub_key & task_controller.firewall = {pods_and_chain}) : {clear_data};
+                TRUE : contents[2];
+            esac;
+
+        -- Dispatching: see 'task_inter' module for proof of transitions between tasks. In this part, we only make sure that the chunks exti the task properly
+        next(sent[0]) :=
+            case
+                (contents[0] = {watermarked_data} & trigger_dispatching) : TRUE;
+                TRUE : sent[0];
+            esac;
+        next(sent[1]) :=
+            case
+                (contents[1] = {watermarked_data} & trigger_dispatching) : TRUE;
+                TRUE : sent[1];
+            esac;
+        next(sent[2]) :=
+            case
+                (contents[2] = {watermarked_data} & trigger_dispatching) : TRUE;
+                TRUE : sent[2];
+            esac;
+
+        -- Send logs
+        next(workflow_controller.logs[0]) :=
+            case
+                (contents[0] = {watermarked_data} & trigger_dispatching & wc_pub_key) : TRUE;
+                TRUE : workflow_controller.logs[0];
+            esac;
+        next(workflow_controller.logs[1]) :=
+            case
+                (contents[1] = {watermarked_data} & trigger_dispatching & wc_pub_key) : TRUE;
+                TRUE : workflow_controller.logs[1];
+            esac;
+        next(workflow_controller.logs[2]) :=
+            case
+                (contents[2] = {watermarked_data} & trigger_dispatching & wc_pub_key) : TRUE;
+                TRUE : workflow_controller.logs[2];
+            esac;
+-- END MODULE
+
+
+-- Contractor space -----------------------------------------------------------
+
+-- The contractor space is the space in which the contractor works. It reads the contents of the pod_in, and writes files to the pod_out.
+--
+-- Parameters:
+-- - pod_in: where to read input data.
+-- - pod_out: where to write output data.
+
+-------------------------------------------------------------------------------
+
+MODULE Contractor_space(pod_in, pod_out, task_controller, blockchain)
+    VAR
+        trigger_notifications : array 0..2 of boolean;
+        inputs : array 0..2 of boolean;
+        outputs : array 0..2 of {none, invalid_work, valid_work, paid_work};
+        proof_of_works : array 0..2 of boolean;
+        sla : boolean;
+        podout_pub_key : boolean;
+        podin_pub_key : boolean;
+        tc_pub_key : boolean;
+
+    ASSIGN
+        init(trigger_notifications[0]) := FALSE;
+        init(trigger_notifications[1]) := FALSE;
+        init(trigger_notifications[2]) := FALSE;
+        init(inputs[0]) := FALSE;
+        init(inputs[1]) := FALSE;
+        init(inputs[2]) := FALSE;
+        init(outputs[0]) := {none};
+        init(outputs[1]) := {none};
+        init(outputs[2]) := {none};
+        init(proof_of_works[0]) := FALSE;
+        init(proof_of_works[1]) := FALSE;
+        init(proof_of_works[2]) := FALSE;
+        init(sla) := FALSE;
+        init(podin_pub_key) := FALSE;
+        init(podout_pub_key) := FALSE;
+
+        init(tc_pub_key) := TRUE; -- From task init
+        next(tc_pub_key) := tc_pub_key;
+
+        -- Fetching inputs from podin
+        next(inputs[0]) :=
+            case
+                (trigger_notifications[0] & podin_pub_key) : TRUE;
+                TRUE : inputs[0];
+            esac;
+        next(inputs[1]) :=
+            case
+                (trigger_notifications[1] & podin_pub_key) : TRUE;
+                TRUE : inputs[1];
+            esac;
+        next(inputs[2]) :=
+            case
+                (trigger_notifications[2] & podin_pub_key) : TRUE;
+                TRUE : inputs[2];
+            esac;
+
+        -- Producing work
+        next(outputs[0]) :=
+            case
+                (blockchain.payments[0]) : {paid_work};
+                ((outputs[0] = {none} | outputs[0] = {invalid_work}) & inputs[0] & task_controller.firewall = {pods_and_chain}) : {invalid_work, valid_work};
+                TRUE : outputs[0];
+            esac;
+        next(outputs[1]) :=
+            case
+                (blockchain.payments[1]) : {paid_work};
+                (outputs[1] = {none} & inputs[1] & task_controller.firewall = {pods_and_chain}) : {invalid_work, valid_work};
+                TRUE : outputs[1];
+            esac;
+        next(outputs[2]) :=
+            case
+                (blockchain.payments[2]) : {paid_work};
+                (outputs[2] = {none} & inputs[2] & task_controller.firewall = {pods_and_chain}) : {invalid_work, valid_work};
+                TRUE : outputs[2];
+            esac;
+
+        -- Producing proof of works
+        next(proof_of_works[0]) :=
+            case
+                (outputs[0] = {valid_work} & sla) : TRUE;
+                TRUE : proof_of_works[0];
+            esac;
+        next(proof_of_works[1]) :=
+            case
+                (outputs[1] = {valid_work} & sla) : TRUE;
+                TRUE : proof_of_works[1];
+            esac;
+        next(proof_of_works[2]) :=
+            case
+                (outputs[2] = {valid_work} & sla) : TRUE;
+                TRUE : proof_of_works[2];
+            esac;
+
+        -- Sending proof of works to TC
+        next(task_controller.proof_of_works[0]) :=
+            case
+                (tc_pub_key & proof_of_works[0]) : TRUE;
+                TRUE : task_controller.proof_of_works[0];
+            esac;
+        next(task_controller.proof_of_works[1]) :=
+            case
+                (tc_pub_key & proof_of_works[1]) : TRUE;
+                TRUE : task_controller.proof_of_works[1];
+            esac;
+        next(task_controller.proof_of_works[2]) :=
+            case
+                (tc_pub_key & proof_of_works[2]) : TRUE;
+                TRUE : task_controller.proof_of_works[2];
+            esac;
+
+    -- Fairness statement that the work produce will eventually be valid.
+    JUSTICE outputs[0] = {valid_work};
+    JUSTICE outputs[1] = {valid_work};
+    JUSTICE outputs[2] = {valid_work};
+-- END MODULE
+
+
+-- Task Controller ------------------------------------------------------------
+
+-- The task controller coordinates the execution of a task by managing the pods and the contractor.
+
+-------------------------------------------------------------------------------
+
+MODULE Task_controller(contractor_space, blockchain)
+    VAR
+        firewall : {none, pods_and_chain, any};
+        sla : boolean;
+        cs_pub_key : boolean;
+        podin_pub_key : boolean;
+        podout_pub_key : boolean;
+        proof_of_works : array 0..2 of boolean;
+
+    ASSIGN
+        init(firewall) := {none};
+        init(sla) := TRUE;
+        init(cs_pub_key) := TRUE;
+        init(podin_pub_key) := TRUE;
+        init(podout_pub_key) := TRUE;
+        init(proof_of_works[0]) := FALSE;
+        init(proof_of_works[1]) := FALSE;
+        init(proof_of_works[2]) := FALSE;
+
+        -- Invariants
+        next(sla) := sla;
+        next(cs_pub_key) := cs_pub_key;
+        next(podin_pub_key) := podin_pub_key;
+        next(podout_pub_key) := podout_pub_key;
+
+        -- Send key to encrypt communications with podin
+        next(contractor_space.podin_pub_key) :=
+            case
+                (cs_pub_key & podin_pub_key) : TRUE;
+                TRUE : contractor_space.podin_pub_key;
+            esac;
+
+        -- Send key to encrypt communications with podout
+        next(contractor_space.podout_pub_key) :=
+            case
+                (cs_pub_key & podout_pub_key) : TRUE;
+                TRUE : contractor_space.podout_pub_key;
+            esac;
+
+        -- Send SLAs
+        next(contractor_space.sla) :=
+            case
+                (cs_pub_key & sla) : TRUE;
+                TRUE : contractor_space.sla;
+            esac;
+
+        -- Give access to pods by updating its firewall
+        next(firewall) :=
+            case
+                (firewall = {none} & contractor_space.sla & contractor_space.podout_pub_key) : {pods_and_chain};
+                TRUE : firewall;
+            esac;
+
+        -- Proof of work received from cs. time to pay
+        next(blockchain.payments[0]) :=
+            case
+                (proof_of_works[0]) : TRUE;
+                TRUE : blockchain.payments[0];
+            esac;
+        next(blockchain.payments[1]) :=
+            case
+                (proof_of_works[1]) : TRUE;
+                TRUE : blockchain.payments[1];
+            esac;
+        next(blockchain.payments[2]) :=
+            case
+                (proof_of_works[2]) : TRUE;
+                TRUE : blockchain.payments[2];
+            esac;
+
+-- END MODULE
+
+
+-- Blockchain -----------------------------------------------------------------
+-------------------------------------------------------------------------------
+
+MODULE Blockchain()
+    VAR
+        payments : array 0..2 of boolean;
+
+    ASSIGN
+        init(payments[0]) := FALSE;
+        init(payments[1]) := FALSE;
+        init(payments[2]) := FALSE;
+-- END MODULE
+
+
+
+
+-- Workflow controller --------------------------------------------------------
+
+-- The workflow controller is the central unit in charge of monitoring the workflow. It will create all of the building blocks of the workflow, and will track its progress by storing the resulting proof of work for each task.
+--
+-- Parameters:
+--  - none
+
+-------------------------------------------------------------------------------
+
+MODULE Workflow_controller()
+    VAR
+        logs: array 0..2 of boolean; -- Contains what resulted from the task (the work).
+
+    ASSIGN
+        init(logs[0]) := FALSE;
+        init(logs[1]) := FALSE;
+        init(logs[2]) := FALSE;
+-- END MODULE
+
+
+-- Main -----------------------------------------------------------------------
+
+-- The Main module shows the connection between the different modules.
+--
+-- Parameters: none
+
+-------------------------------------------------------------------------------
+
+MODULE main()
+    VAR
+        pod_in : Pod_in(contractor_space);
+        pod_out : Pod_out(workflow_controller, contractor_space, task_controller);
+        contractor_space : Contractor_space(pod_in, pod_out, task_controller, blockchain);
+        task_controller : Task_controller(contractor_space, blockchain);
+        blockchain : Blockchain();
+        workflow_controller : Workflow_controller();
+-- END MODULE
+
+
+-------------------------------------------------------------------------------
+-- Security requirements                                                    ---
+-------------------------------------------------------------------------------
+
+-- P1- Workflow termination ---------------------------------------------------
+-- General: The workflow terminates.
+-- For task exec: All the values are received and passed to the next task to be processed, i.e. all pre- and post- conditions are satisfied.
+-------------------------------------------------------------------------------
+
+
+-- Pre-conditions:
+
+-- Pod_in
+LTLSPEC pod_in.contents[0];
+LTLSPEC pod_in.contents[1];
+LTLSPEC pod_in.contents[2];
+LTLSPEC pod_in.trigger_start;
+LTLSPEC pod_in.cs_pub_key;
+
+-- Pod_out
+LTLSPEC pod_out.contents[0] = {empty};
+LTLSPEC pod_out.contents[1] = {empty};
+LTLSPEC pod_out.contents[2] = {empty};
+LTLSPEC pod_out.trigger_marking = TRUE;
+LTLSPEC pod_out.trigger_dispatching = TRUE;
+LTLSPEC pod_out.wc_pub_key = TRUE;
+LTLSPEC pod_out.sent[0] = FALSE;
+LTLSPEC pod_out.sent[1] = FALSE;
+LTLSPEC pod_out.sent[2] = FALSE;
+
+-- Contractor space
+LTLSPEC contractor_space.trigger_notifications[0] = FALSE;
+LTLSPEC contractor_space.trigger_notifications[1] = FALSE;
+LTLSPEC contractor_space.trigger_notifications[2] = FALSE;
+LTLSPEC contractor_space.inputs[0] = FALSE;
+LTLSPEC contractor_space.inputs[1] = FALSE;
+LTLSPEC contractor_space.inputs[2] = FALSE;
+LTLSPEC contractor_space.outputs[0] = {none};
+LTLSPEC contractor_space.outputs[1] = {none};
+LTLSPEC contractor_space.outputs[2] = {none};
+LTLSPEC contractor_space.proof_of_works[0] = FALSE;
+LTLSPEC contractor_space.proof_of_works[1] = FALSE;
+LTLSPEC contractor_space.proof_of_works[2] = FALSE;
+LTLSPEC contractor_space.sla = FALSE;
+LTLSPEC contractor_space.podin_pub_key = FALSE;
+LTLSPEC contractor_space.podout_pub_key = FALSE;
+LTLSPEC contractor_space.tc_pub_key = TRUE;
+
+-- Task controller
+LTLSPEC task_controller.firewall = {none};
+LTLSPEC task_controller.sla = TRUE;
+LTLSPEC task_controller.cs_pub_key = TRUE;
+LTLSPEC task_controller.podin_pub_key = TRUE;
+LTLSPEC task_controller.podout_pub_key = TRUE;
+LTLSPEC task_controller.proof_of_works[0] = FALSE;
+LTLSPEC task_controller.proof_of_works[1] = FALSE;
+LTLSPEC task_controller.proof_of_works[2] = FALSE;
+
+-- Blockchain
+LTLSPEC blockchain.payments[0] = FALSE;
+LTLSPEC blockchain.payments[1] = FALSE;
+LTLSPEC blockchain.payments[2] = FALSE;
+
+-- Workflow controller
+LTLSPEC workflow_controller.logs[0] = FALSE;
+LTLSPEC workflow_controller.logs[1] = FALSE;
+LTLSPEC workflow_controller.logs[2] = FALSE;
+
+-- Post-conditions for P1:
+
+-- Pod_out: Sent all of the data
+LTLSPEC F( G( pod_out.sent[0] & pod_out.sent[1] & pod_out.sent[2]) );
+
+-- Contractor space: all outputs were paid
+LTLSPEC F( G( contractor_space.outputs[0] = {paid_work} & contractor_space.outputs[1] = {paid_work} & contractor_space.outputs[2] = {paid_work} ) );
+
+-- Task controller: has all of the proof of works
+LTLSPEC F( G( task_controller.proof_of_works[0] & task_controller.proof_of_works[1] & task_controller.proof_of_works[2] ) );
+
+-- Blockchain: everything was paid
+LTLSPEC F( G( blockchain.payments[0] & blockchain.payments[1] & blockchain.payments[2] ) );
+
+-- Workflow controller: has logs of everything
+LTLSPEC F( G( workflow_controller.logs[0] & workflow_controller.logs[1] & workflow_controller.logs[2] ) );
+
+-- P3- Forensics --------------------------------------------------------------
+-- General: every task within the workflow is forensicable, which means that it should be possible to (i) determine which actor performed this action, (ii) when this action happened, and (iii) what were the inputs and outputs of this action.
+-- For task exec: we need to make sure that the outputs from each task are sent to the Workflow Controller via the SendLogs() operation.
+-------------------------------------------------------------------------------
+LTLSPEC F( G( workflow_controller.logs[0] & workflow_controller.logs[1] & workflow_controller.logs[2] ) );
+
+-- P4- Leak imputation --------------------------------------------------------
+-- General: if a data leak happens, we can identify which actor is responsible.
+-- For task exec: all chunks were watermarked.
+-------------------------------------------------------------------------------
+LTLSPEC F( G( pod_out.contents[0] = {watermarked_data} & pod_out.contents[1] = {watermarked_data} & pod_out.contents[2] = {watermarked_data} ) );

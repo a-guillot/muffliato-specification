@@ -1,0 +1,379 @@
+-------------------------------------------------------------------------------
+-- Muffliato specification - Initialization of a task                        --
+-------------------------------------------------------------------------------
+
+
+-- Pod_in ---------------------------------------------------------------------
+
+-- The pod_in contains the inputs of the task. It is read by the contractor.
+
+-------------------------------------------------------------------------------
+
+MODULE Pod_in()
+    VAR
+        created : boolean; -- Indicates if the building block was created by the workflow controller. Starts at false.
+
+        triggers : boolean; -- Trigger to contact TC when full.
+        -- Variables that need to be set to be able to start the execution of a task:
+        contents : boolean;
+        pub_key_task_controller : boolean;
+
+        -- Variables needed for inter task
+        activators : boolean;
+
+    ASSIGN
+        init(created) := FALSE;
+        init(triggers) := FALSE;
+        init(contents) := FALSE;
+        init(pub_key_task_controller) := FALSE;
+
+        init(activators) := FALSE;
+-- END MODULE
+
+
+-- Pod_out --------------------------------------------------------------------
+
+-- The pod_in contains the outputs of the task. It is written to by the contractor.
+
+-------------------------------------------------------------------------------
+
+MODULE Pod_out()
+    VAR
+        created : boolean; -- Indicates if the building block was created by the workflow controller. Starts at false.
+
+        triggers : boolean; -- Trigger to contact TC when full.
+        -- Variables that need to be set to be able to start the execution of a task:
+        pub_key_task_controller : boolean;
+
+        -- Variables needed for inter task
+        wc_pub_key : boolean;
+        successors_pub_keys : boolean;
+        chunk_mapping : boolean;
+
+    ASSIGN
+        init(created) := FALSE;
+        init(triggers) := FALSE;
+
+        init(pub_key_task_controller) := FALSE;
+
+        init(wc_pub_key) := FALSE;
+        init(successors_pub_keys) := FALSE;
+        init(chunk_mapping) := FALSE;
+-- END MODULE
+
+
+-- Contractor space -----------------------------------------------------------
+
+-- The contractor space is the space in which the contractor works. It reads the contents of the pod_in, and writes files to the pod_out.
+
+-------------------------------------------------------------------------------
+
+MODULE Contractor_space(pod_in, pod_out, task_controller)
+    VAR
+        created : boolean; -- Indicates if the building block was created by the workflow controller. Starts at false.
+
+        tc_pub_key : boolean; -- Used to communicate with tc
+
+    ASSIGN
+        -- Modified by WC
+        init(created) := FALSE;
+        init(tc_pub_key) := TRUE;
+
+        -- Invariants
+        next(tc_pub_key) := tc_pub_key;
+-- END MODULE
+
+
+-- Task Controller ------------------------------------------------------------
+
+-- The task controller coordinates the execution of a task by managing the pods and the contractor.
+
+-------------------------------------------------------------------------------
+
+MODULE Task_controller(contractor_space, pod_in, pod_out, workflow_controller)
+    VAR
+        created : boolean; -- Indicates if the building block was created by the workflow controller. Starts at false.
+
+        firewall : {none, both_pods, any}; -- Defines who the contractor is allowed to contact.
+
+        key_w_pod_out : boolean;
+        key_r_pod_in : boolean;
+        sla : boolean;
+        pub_key_contractor_space : boolean;
+
+    ASSIGN
+        -- Modified by WC
+        init(created) := FALSE;
+        init(key_w_pod_out) := FALSE;
+        init(key_r_pod_in) := FALSE;
+        init(sla) := FALSE;
+        init(pub_key_contractor_space) := FALSE;
+
+        init(firewall) := {none};
+        next(firewall) := firewall;
+-- END MODULE
+
+
+-- Workflow controller --------------------------------------------------------
+
+-- The workflow controller is the central unit in charge of monitoring the workflow. It will create all of the building blocks of the workflow, and will track its progress by storing the resulting proof of work for each task.
+
+-------------------------------------------------------------------------------
+
+MODULE Workflow_controller(pod_in, pod_out, contractor_space, task_controller)
+    VAR
+        inputs : boolean; -- Contains the inputs of the task. Will be extracted from WF model.
+        environment : boolean; -- Is in possession of the environment required to create a task.
+        sla : boolean;
+        triggers_pod_in : boolean; -- Policy for pod_in: contact specific task controller when condition is fulfilled
+        triggers_pod_out : boolean; -- Policy for pod_out: contact task_controller when filled by contactor space
+
+        key_enc_pod_in : boolean; -- Key to encrypt the pod_in
+        key_enc_pod_out : boolean; -- Key to encrypt the pod_out
+        key_enc_task_controller : boolean; -- Key to encrypt the task controller
+        key_r_pod_in : boolean; -- Key to read the pod_in
+        key_w_pod_out : boolean; -- Key to write to the pod_out
+        key_task_controller : boolean; -- Key used to (i) encrypt the task controller, (ii) encrypt the communications originating from the task controller.
+
+        pub_key_pod_in : boolean;
+        pub_key_pod_out : boolean;
+        pub_key_task_controller : boolean;
+        pub_key_contractor_space : boolean;
+        pub_key_workflow_controller : boolean;
+
+        -- Variables for inter task
+        activators : boolean;
+        successors_pub_keys : boolean;
+        chunk_mapping : boolean;
+
+        -- Variables for intra task
+        logs : boolean;
+
+    ASSIGN
+        -- Variables extracted from task preparation
+        init(inputs) := TRUE;
+        init(environment) := TRUE;
+        init(sla) := TRUE;
+        init(triggers_pod_in) := TRUE;
+        init(triggers_pod_out) := TRUE;
+        init(activators) := TRUE;
+        init(successors_pub_keys) := TRUE;
+        init(chunk_mapping) := TRUE;
+
+        next(inputs) := inputs;
+        next(environment) := environment;
+        next(sla) := TRUE;
+        next(triggers_pod_in) := triggers_pod_in;
+        next(triggers_pod_out) := triggers_pod_out;
+        next(activators) := activators;
+        next(successors_pub_keys) := successors_pub_keys;
+        next(chunk_mapping) := chunk_mapping;
+
+        -- Variables that will be set during the execution of a task.
+        -- The keys are not present at the start, and will be created by the workflow controller at the start of its execution
+        init(key_enc_pod_in) := FALSE;
+        init(key_enc_pod_out) := FALSE;
+        init(key_enc_task_controller) := FALSE;
+        init(key_r_pod_in) := FALSE;
+        init(key_w_pod_out) := FALSE;
+        init(key_task_controller) := FALSE;
+        init(pub_key_pod_in) := FALSE;
+        init(pub_key_pod_out) := FALSE;
+        init(pub_key_task_controller) := FALSE;
+        init(pub_key_contractor_space) := FALSE;
+        init(pub_key_workflow_controller) := FALSE;
+
+        next(key_enc_pod_in) := TRUE;
+        next(key_enc_pod_out) := TRUE;
+        next(key_enc_task_controller) := TRUE;
+        next(key_r_pod_in) := TRUE;
+        next(key_w_pod_out) := TRUE;
+        next(key_task_controller) := TRUE;
+        next(pub_key_pod_in) := TRUE;
+        next(pub_key_pod_out) := TRUE;
+        next(pub_key_task_controller) := TRUE;
+        next(pub_key_contractor_space) := TRUE;
+        next(pub_key_workflow_controller) := TRUE;
+
+        -- Variables for intra task
+        init(logs) := FALSE;
+        next(logs) := FALSE;
+
+        -- Pod_in: creating, and setting variables ----------------------------
+
+        -- Create pod_in if the data required to initialize it is present.
+        next(pod_in.created) :=
+            case
+                (key_enc_pod_in & inputs) : TRUE;
+                TRUE : pod_in.created;
+            esac;
+
+        -- Add triggers
+        next(pod_in.triggers) :=
+            case
+                (pod_in.created & pub_key_pod_in & triggers_pod_in) : TRUE;
+                TRUE : pod_in.triggers;
+            esac;
+
+        -- Fill the pod_in with task input data.
+        next(pod_in.contents) :=
+            case
+                (pod_in.created & pub_key_pod_in & inputs) : TRUE;
+                TRUE : pod_in.contents;
+            esac;
+
+        -- Give it the required public keys
+        next(pod_in.pub_key_task_controller) :=
+            case
+                (pod_in.created & pub_key_pod_in & pub_key_task_controller) : TRUE;
+                TRUE : pod_in.pub_key_task_controller;
+            esac;
+
+        next(pod_in.activators) :=
+            case
+                (pod_in.created & pub_key_pod_in & activators) : TRUE;
+                TRUE : pod_in.activators;
+            esac;
+
+        -- Pod_out: creating, and setting variables ----------------------------
+
+        -- The pod_out will be created empty, so it does not need wait conditions.
+        next(pod_out.created) :=
+            case
+                (key_enc_pod_out) : TRUE;
+                TRUE : pod_out.created;
+            esac;
+
+        -- Add triggers
+        next(pod_out.triggers) :=
+            case
+                (pod_out.created & pub_key_pod_out & triggers_pod_out) : TRUE;
+                TRUE : pod_out.triggers;
+            esac;
+
+        -- Give it the required public keys
+        next(pod_out.pub_key_task_controller) :=
+            case
+                (pod_out.created & pub_key_pod_out & pub_key_task_controller) : TRUE;
+                TRUE : pod_out.pub_key_task_controller;
+            esac;
+
+        next(pod_out.wc_pub_key) :=
+            case
+                (pod_out.created & pub_key_pod_out & pub_key_workflow_controller) : TRUE;
+                TRUE : pod_out.wc_pub_key;
+            esac;
+
+        next(pod_out.successors_pub_keys) :=
+            case
+                (pod_out.created & pub_key_pod_out & successors_pub_keys) : TRUE;
+                TRUE : pod_out.successors_pub_keys;
+            esac;
+
+        next(pod_out.chunk_mapping) :=
+            case
+                (pod_out.created & pub_key_pod_out & chunk_mapping) : TRUE;
+                TRUE : pod_out.chunk_mapping;
+            esac;
+
+        -- Contractor_space: creating, and setting variables ----------------------------
+
+        -- Create the contractor space if we have the environment. The contractor space, being independent from the workflow_controller, will see its variables to the correct state itself.
+        next(contractor_space.created) :=
+            case
+                (pub_key_contractor_space & environment) : TRUE;
+                TRUE : contractor_space.created;
+            esac;
+
+        -- task_controller: creating, and setting variables ----------------------------
+
+        -- Create the task controller if the workflow controller is in posession of (i) the following keys: R on pod_in (for contractor space), W on pod_out (for contractor space), R on pod_out (for itself), (ii) the SLAs extracted from the workflow model, and the private key that it was encrypted with.
+        next(task_controller.created) :=
+            case
+                (key_enc_task_controller & key_r_pod_in & key_w_pod_out & sla & key_task_controller) : TRUE;
+                TRUE : task_controller.created;
+            esac;
+
+        next(task_controller.key_w_pod_out) :=
+            case
+                (task_controller.created & pub_key_task_controller & key_w_pod_out) : TRUE;
+                TRUE : task_controller.key_w_pod_out;
+            esac;
+
+        next(task_controller.key_r_pod_in) :=
+            case
+                (task_controller.created & pub_key_task_controller & key_r_pod_in) : TRUE;
+                TRUE : task_controller.key_r_pod_in;
+            esac;
+
+        next(task_controller.sla) :=
+            case
+                (task_controller.created & pub_key_task_controller & sla) : TRUE;
+                TRUE : task_controller.sla;
+            esac;
+
+        -- Give it the required public keys
+        next(task_controller.pub_key_contractor_space) :=
+            case
+                (task_controller.created & pub_key_task_controller & pub_key_contractor_space) : TRUE;
+                TRUE : task_controller.pub_key_contractor_space;
+            esac;
+-- END MODULE
+
+
+-- Main -----------------------------------------------------------------------
+
+-- The Main module shows the connection between the different modules.
+--
+-- Parameters: none
+
+-------------------------------------------------------------------------------
+
+MODULE main()
+    VAR
+        pod_in : Pod_in();
+        pod_out : Pod_out();
+        contractor_space : Contractor_space(pod_in, pod_out, task_controller);
+        task_controller : Task_controller(contractor_space, pod_in, pod_out,
+            workflow_controller);
+        workflow_controller : Workflow_controller(pod_in, pod_out, contractor_space, task_controller);
+-- END MODULE
+
+
+-------------------------------------------------------------------------------
+-- Security requirements                                                    ---
+-------------------------------------------------------------------------------
+
+-- P1- Workflow termination ---------------------------------------------------
+-- General: The workflow terminates.
+-- For task init: All the values are passed to the next task to be processed, i.e. all post-conditions are satisfied.
+-------------------------------------------------------------------------------
+
+-- Pod_in
+LTLSPEC F( G( pod_in.created ) );
+LTLSPEC F( G( pod_in.triggers ) );
+LTLSPEC F( G( pod_in.contents ) );
+LTLSPEC F( G( pod_in.pub_key_task_controller ) );
+LTLSPEC F( G( pod_in.activators ) );
+
+-- Pod_out
+LTLSPEC F( G( pod_out.created) );
+LTLSPEC F( G( pod_out.triggers ) );
+LTLSPEC F( G( pod_out.wc_pub_key ) );
+LTLSPEC F( G( pod_out.successors_pub_keys ) );
+LTLSPEC F( G( pod_out.chunk_mapping) );
+
+-- Contractor space
+LTLSPEC F( G( contractor_space.created ) );
+LTLSPEC F( G( contractor_space.tc_pub_key ) );
+
+-- Task controller
+LTLSPEC F( G( task_controller.created ) );
+LTLSPEC F( G( task_controller.firewall = {none} ) );
+LTLSPEC F( G( task_controller.key_w_pod_out ) );
+LTLSPEC F( G( task_controller.key_r_pod_in ) );
+LTLSPEC F( G( task_controller.sla ) );
+LTLSPEC F( G( task_controller.pub_key_contractor_space ) );
+
+-- Workflow controller
+LTLSPEC F( G( !workflow_controller.logs ) );

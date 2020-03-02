@@ -1,0 +1,247 @@
+-------------------------------------------------------------------------------
+-- Muffliato specification - Inter-task                                      --
+-------------------------------------------------------------------------------
+
+-- Pod_in ---------------------------------------------------------------------
+
+-- The pod_in contains the inputs of the task. It is read by the contractor.
+--
+-- Parameters:
+--  - value: boolean, expresses if the pod has data loaded in it or not.
+--
+
+-------------------------------------------------------------------------------
+
+MODULE Pod_in()
+    VAR
+        -- First info is if the data arrived or not, second one is the data itself
+        chunk1 : array 0..1 of boolean;
+        chunk2 : array 0..1 of boolean;
+
+        -- Equal to activation scalar if all are true. Equivalent to using integers but keeps the model generic enough to use BDD as opposed to bounded model checking.
+        activators : array 0..1 of boolean;
+        trigger_start : boolean; -- Objective: trigger start becomes true
+
+    ASSIGN
+        init(chunk1[0]) := FALSE;
+        init(chunk1[1]) := FALSE;
+        init(chunk2[0]) := FALSE;
+        init(chunk2[1]) := FALSE;
+
+        init(activators[0]) := FALSE;
+        init(activators[1]) := FALSE;
+        init(trigger_start) := FALSE;
+
+        next(activators[0]) :=
+            case
+                (chunk1[0]) : TRUE;
+                TRUE : activators[0];
+            esac;
+        next(activators[1]) :=
+            case
+                (chunk2[0]) : TRUE;
+                TRUE : activators[1];
+            esac;
+
+        next(trigger_start) :=
+            case
+                (activators[0] & activators[1] ) : TRUE;
+                TRUE : trigger_start;
+            esac;
+-- END MODULE
+
+
+-- Pod_out --------------------------------------------------------------------
+
+-- The pod_in contains the outputs of the task. It is written to by the contractor.
+
+-------------------------------------------------------------------------------
+
+MODULE Pod_out1(pod_in, workflow_controller)
+    VAR
+        chunk : boolean;
+        trigger_dispatching : boolean;
+
+        -- Structure of the map: [(@pod_in, send chunk or not, key to pod_in), (@wc, always send, wc_pub_key)]
+        map : array 0..1 of array 0..2 of boolean;
+
+    ASSIGN
+        -- The content is already here from the previous phase
+        init(chunk) := TRUE;
+        next(chunk) := chunk;
+
+        init(trigger_dispatching) := TRUE;
+        next(trigger_dispatching) := trigger_dispatching;
+
+        -- Filling the map
+        init(map[0][0]) := TRUE; -- Address of the pod_in to send to
+        init(map[0][1]) := TRUE; -- Always true
+        init(map[0][2]) := TRUE; -- Already posessed the key to the pod_in
+
+        init(map[1][0]) := TRUE; -- Address of the wc
+        init(map[1][1]) := TRUE; -- Always send data to the wc
+        init(map[1][2]) := TRUE; -- Already posesses the key to the wc
+
+
+        -- Contacting the successor, even if no data is transmitted (see 5.3 in paper)
+        next(pod_in.chunk1[0]) :=
+            case
+                -- Send if address and key present
+                (map[0][0] & map[0][2]) : TRUE;
+                TRUE : pod_in.chunk1[0];
+            esac;
+
+        -- Transmitting the data
+        next(pod_in.chunk1[1]) :=
+            case
+                -- Send if address and key present, AND data is wanted
+                (chunk & map[0][0] & map[0][1] & map[0][2]) : TRUE;
+                TRUE : pod_in.chunk1[1];
+            esac;
+
+        -- Sending logs to the wc
+        next(workflow_controller.logs[0]) :=
+            case
+                (map[1][0] & map[1][1] & map[1][2]) : TRUE;
+                TRUE : workflow_controller.logs[0];
+            esac;
+-- END MODULE
+
+MODULE Pod_out2(pod_in, workflow_controller)
+    VAR
+        chunk : boolean;
+        trigger_dispatching : boolean;
+
+        -- Structure of the map: [(@pod_in, send chunk or not, key to pod_in), (@wc, always send, wc_pub_key)]
+        map : array 0..1 of array 0..2 of boolean;
+
+    ASSIGN
+        -- The content is already here from the previous phase
+        init(chunk) := TRUE;
+        next(chunk) := chunk;
+
+        init(trigger_dispatching) := TRUE;
+        next(trigger_dispatching) := trigger_dispatching;
+
+        -- Filling the map
+        init(map[0][0]) := TRUE; -- Address of the pod_in to send to
+        init(map[0][1]) := {TRUE, FALSE}; -- Here or not
+        init(map[0][2]) := TRUE; -- Already posessed the key to the pod_in
+
+        init(map[1][0]) := TRUE; -- Address of the wc
+        init(map[1][1]) := TRUE; -- Always send data to the wc
+        init(map[1][2]) := TRUE; -- Already posesses the key to the wc
+
+
+        -- Contacting the successor, even if no data is transmitted (see 5.3 in paper)
+        next(pod_in.chunk2[0]) :=
+            case
+                -- Send if address and key present
+                (map[0][0] & map[0][2]) : TRUE;
+                TRUE : pod_in.chunk2[0];
+            esac;
+
+        -- Transmitting the data
+        next(pod_in.chunk2[1]) :=
+            case
+                -- Send if address and key present, AND data is wanted
+                (chunk & map[0][0] & map[0][1] & map[0][2]) : TRUE;
+                TRUE : pod_in.chunk2[1];
+            esac;
+
+        -- Sending logs to the wc
+        next(workflow_controller.logs[1]) :=
+            case
+                (map[1][0] & map[1][1] & map[1][2]) : TRUE;
+                TRUE : workflow_controller.logs[1];
+            esac;
+-- END MODULE
+
+
+
+-- Workflow Controller --------------------------------------------------------
+-------------------------------------------------------------------------------
+
+MODULE Workflow_controller()
+    VAR
+        logs : array 0..1 of boolean; -- Logs from the two tasks
+
+    ASSIGN
+        init(logs[0]) := FALSE;
+        init(logs[1]) := FALSE;
+-- END MODULE
+
+
+-- Main -----------------------------------------------------------------------
+
+-- The Main module shows the connection between the different modules.
+--
+-- Parameters: none
+
+-------------------------------------------------------------------------------
+
+MODULE main()
+    VAR
+        pod_in : Pod_in();
+        pod_out1 : Pod_out1(pod_in, workflow_controller);
+        pod_out2 : Pod_out2(pod_in, workflow_controller);
+        workflow_controller: Workflow_controller();
+-- END MODULE
+
+
+-------------------------------------------------------------------------------
+-- Security requirements                                                    ---
+-------------------------------------------------------------------------------
+
+-- P1- Workflow termination ---------------------------------------------------
+-- General: The workflow terminates.
+-- For task inter: works if the correct chunks are sent to the correct recipients, i.e. if our pre- and post- conditions are met.
+-------------------------------------------------------------------------------
+
+
+-- Pre-conditions:
+
+-- Podin
+LTLSPEC !pod_in.chunk1[0];
+LTLSPEC !pod_in.chunk1[1];
+LTLSPEC !pod_in.chunk2[0];
+LTLSPEC !pod_in.chunk2[1];
+LTLSPEC !pod_in.activators[0];
+LTLSPEC !pod_in.activators[1];
+LTLSPEC !pod_in.trigger_start;
+
+-- Podout1 and 2
+LTLSPEC pod_out1.chunk; -- Data already here
+LTLSPEC pod_out2.chunk; -- Data already here
+LTLSPEC pod_out1.trigger_dispatching; -- Trigger already here
+LTLSPEC pod_out2.trigger_dispatching; -- Trigger already here
+
+-- Destinations and keys already known
+LTLSPEC pod_out1.map[0][0];
+LTLSPEC pod_out1.map[0][2];
+LTLSPEC pod_out1.map[1][0];
+LTLSPEC pod_out1.map[1][2];
+LTLSPEC pod_out2.map[0][0];
+LTLSPEC pod_out2.map[0][2];
+LTLSPEC pod_out2.map[1][0];
+LTLSPEC pod_out2.map[1][2];
+
+-- Workflow Controller
+LTLSPEC !workflow_controller.logs[0];
+LTLSPEC !workflow_controller.logs[1];
+
+-- Post-conditions:
+
+-- Pod in starts
+LTLSPEC F( G( pod_in.trigger_start ) );
+
+-- Workflow Controller has logs
+LTLSPEC F( G( workflow_controller.logs[0] ) );
+LTLSPEC F( G( workflow_controller.logs[1] ) );
+
+-- P3- Forensics --------------------------------------------------------------
+-- General: every task within the workflow is forensicable, which means that it should be possible to (i) determine which actor performed this action, (ii) when this action happened, and (iii) what were the inputs and outputs of this action.
+-- For task inter: the results of the task are already sent to the workflow controller, so no problem.
+-------------------------------------------------------------------------------
+LTLSPEC F( G( workflow_controller.logs[0] ) );
+LTLSPEC F( G( workflow_controller.logs[1] ) );
